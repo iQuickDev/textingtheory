@@ -34,5 +34,3 @@ function selectBadge(badge: Badge) {
     </div>
   </div>
 </template>
-
-

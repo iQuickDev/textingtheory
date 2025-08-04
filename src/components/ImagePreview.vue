@@ -106,6 +106,80 @@ function stopResize()
     window.removeEventListener('mouseup', stopResize);
 }
 
+// Add touch event handlers for mobile support
+function startTouchDrag(e: TouchEvent, overlay: BadgeOverlay) {
+    if (e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    overlay.dragging = true;
+    overlay.offsetX = touch.clientX - overlay.x;
+    overlay.offsetY = touch.clientY - overlay.y;
+    activeOverlayId.value = overlay.id;
+    window.addEventListener('touchmove', onTouchDrag, { passive: false });
+    window.addEventListener('touchend', stopTouchDrag);
+}
+function onTouchDrag(e: TouchEvent) {
+    if (e.touches.length !== 1) return;
+    const overlay = overlays.value.find(o => o.id === activeOverlayId.value);
+    if (!overlay || !overlay.dragging) return;
+    const container = document.getElementById('image-container');
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const touch = e.touches[0];
+    let newX = touch.clientX - rect.left - overlay.offsetX;
+    let newY = touch.clientY - rect.top - overlay.offsetY;
+    newX = Math.max(0, Math.min(newX, rect.width - overlay.width));
+    newY = Math.max(0, Math.min(newY, rect.height - overlay.height));
+    overlay.x = newX;
+    overlay.y = newY;
+    e.preventDefault();
+}
+function stopTouchDrag() {
+    const overlay = overlays.value.find(o => o.id === activeOverlayId.value);
+    if (overlay) overlay.dragging = false;
+    activeOverlayId.value = null;
+    window.removeEventListener('touchmove', onTouchDrag);
+    window.removeEventListener('touchend', stopTouchDrag);
+}
+
+// Touch resizing
+function startTouchResize(e: TouchEvent, overlay: BadgeOverlay) {
+    if (e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    overlay.resizing = true;
+    overlay.offsetX = touch.clientX;
+    overlay.offsetY = touch.clientY;
+    activeOverlayId.value = overlay.id;
+    window.addEventListener('touchmove', onTouchResize, { passive: false });
+    window.addEventListener('touchend', stopTouchResize);
+    e.stopPropagation();
+}
+function onTouchResize(e: TouchEvent) {
+    if (e.touches.length !== 1) return;
+    const overlay = overlays.value.find(o => o.id === activeOverlayId.value);
+    if (!overlay || !overlay.resizing) return;
+    const container = document.getElementById('image-container');
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const touch = e.touches[0];
+    const dx = touch.clientX - overlay.offsetX;
+    let newWidth = Math.max(24, overlay.width + dx);
+    let newHeight = Math.max(24, newWidth / (overlay.aspectRatio || 1));
+    newWidth = Math.min(newWidth, rect.width - overlay.x);
+    newHeight = Math.min(newHeight, rect.height - overlay.y);
+    overlay.width = newWidth;
+    overlay.height = newHeight;
+    overlay.offsetX = touch.clientX;
+    overlay.offsetY = touch.clientY;
+    e.preventDefault();
+}
+function stopTouchResize() {
+    const overlay = overlays.value.find(o => o.id === activeOverlayId.value);
+    if (overlay) overlay.resizing = false;
+    activeOverlayId.value = null;
+    window.removeEventListener('touchmove', onTouchResize);
+    window.removeEventListener('touchend', stopTouchResize);
+}
+
 function deleteOverlay(id: number)
 {
     overlays.value = overlays.value.filter(o => o.id !== id);
@@ -121,8 +195,31 @@ onMounted(() => {
     }
 });
 
-onBeforeUnmount(() => {
+// Global image paste support
+onMounted(() => {
+  window.addEventListener('paste', handlePaste);
 });
+onBeforeUnmount(() => {
+  window.removeEventListener('paste', handlePaste);
+});
+
+function handlePaste(e: ClipboardEvent) {
+  if (!e.clipboardData) return;
+  const items = e.clipboardData.items;
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (item.kind === 'file' && item.type.startsWith('image/')) {
+      const file = item.getAsFile();
+      if (file) {
+        imageUrl.value = URL.createObjectURL(file);
+        // Clear overlays and badge selection
+        overlays.value = [];
+        setTimeout(() => emit('update:selectedBadge', null), 0);
+        break;
+      }
+    }
+  }
+}
 
 // Add onImageContainerClick to handle badge placement
 function onImageContainerClick(e: MouseEvent) {
@@ -254,17 +351,18 @@ defineExpose({ resetBadges, exportImage });
 </script>
 
 <template>
-    <div class="w-full h-[80vh] flex flex-col md:flex-row overflow-hidden bg-gray-900 text-gray-100">
+    <div class="w-full h-full flex flex-col md:flex-row overflow-hidden bg-gray-900 text-gray-100">
         <!-- Main image area -->
-        <div class="flex-1 flex flex-col items-center justify-center bg-gray-900">
+        <div class="flex-1 flex h-full flex-col items-center justify-center bg-gray-900">
             <div v-if="imageUrl" id="image-container"
-                class="relative max-w-full flex items-center justify-center md:mt-16"
-                style="aspect-ratio: 1/1;"
+                class="relative w-full h-full max-w-full flex items-center justify-center md:mt-16"
                 @click="onImageContainerClick"
             >
                 <img :src="imageUrl" alt="Preview"
-                    class="block max-h-[75vh] max-w-full h-auto w-auto mx-auto select-none"
-                    style="z-index:0; pointer-events:none;"
+                    class="block max-w-full h-auto w-auto mx-auto select-none"
+                    style="z-index:0; pointer-events:none; user-select:none;"
+                    draggable="false"
+                    tabindex="-1"
                 />
                 <template v-for="overlay in overlays" :key="overlay.id">
                     <div class="group" :style="{
@@ -275,19 +373,28 @@ defineExpose({ resetBadges, exportImage });
                         height: overlay.height + 'px',
                         cursor: overlay.dragging ? 'grabbing' : 'grab',
                         zIndex: 10,
-                    }" @mousedown="(e) => startDrag(e, overlay)">
+                    }" 
+                    @mousedown="(e) => startDrag(e, overlay)"
+                    @touchstart.stop.prevent="(e) => startTouchDrag(e, overlay)"
+                    style="touch-action: none; -webkit-user-drag: none; user-select: none;"
+                >
                         <!-- Delete button -->
                         <button
-                            class="absolute -top-2 -right-2 z-20 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity border-2 border-white shadow"
-                            style="font-size: 0.9rem;" @mousedown.stop @click.stop="deleteOverlay(overlay.id)"
-                            aria-label="Delete badge">
+                            class="absolute -top-2 -right-2 z-20 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center group-hover:opacity-100 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity border-2 border-white shadow select-none"
+                            style="font-size: 0.9rem; user-select:none;" @mousedown.stop @click.stop="deleteOverlay(overlay.id)"
+                            aria-label="Delete badge"
+                            tabindex="-1"
+                        >
                             ×
                         </button>
                         <img :src="overlay.badge.image" :alt="overlay.badge.name"
                             :style="{ width: '100%', height: '100%', pointerEvents: 'none', userSelect: 'none' }" />
                         <!-- Resize handle -->
-                        <div class="absolute right-0 bottom-0 w-4 h-4 bg-blue-500 rounded-full border-2 border-white cursor-se-resize"
-                            style="z-index:20;" @mousedown.stop="(e) => startResize(e, overlay)"></div>
+                        <div class="absolute right-0 bottom-0 w-4 h-4 bg-blue-500 rounded-full border-2 border-white cursor-se-resize group-hover:opacity-100 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
+                            style="z-index:20;"
+                            @mousedown.stop="(e) => startResize(e, overlay)"
+                            @touchstart.stop.prevent="(e) => startTouchResize(e, overlay)"
+                        ></div>
                     </div>
                 </template>
             </div>
