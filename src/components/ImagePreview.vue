@@ -351,7 +351,7 @@ defineExpose({ resetBadges, exportImage });
 </script>
 
 <template>
-    <div class="w-full h-full flex flex-col md:flex-row overflow-hidden bg-gray-900 text-gray-100">
+    <div class="w-full h-[100vh] flex flex-col md:flex-row overflow-hidden bg-gray-900 text-gray-100">
         <!-- Main image area -->
         <div class="flex-1 flex h-full flex-col items-center justify-center bg-gray-900">
             <div v-if="imageUrl" id="image-container"
