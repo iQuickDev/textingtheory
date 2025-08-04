@@ -359,7 +359,7 @@ defineExpose({ resetBadges, exportImage });
                 @click="onImageContainerClick"
             >
                 <img :src="imageUrl" alt="Preview"
-                    class="block max-w-full h-auto w-auto mx-auto select-none"
+                    class="block md:max-h-[90vh] sm:max-h-full max-w-full h-auto w-auto mx-auto select-none"
                     style="z-index:0; pointer-events:none; user-select:none;"
                     draggable="false"
                     tabindex="-1"
